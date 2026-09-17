@@ -3,14 +3,25 @@ Vibelnyc Recommendation Engine FastAPI Server
 Production backend exposing audio feature recommendations, mood matching, and autocomplete.
 """
 
+import logging
+import sys
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query, status
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-import sys
-from pathlib import Path
+# Configure structured logging for backend operations
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s in %(name)s: %(message)s",
+)
+logger = logging.getLogger("vibelnyc.api")
 
 # Add backend/src to path for clean package imports
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
@@ -19,6 +30,60 @@ from recommender import VibeRecommender
 
 # Global recommender engine cached in memory
 recommender: Optional[VibeRecommender] = None
+
+
+class InMemoryRateLimiter:
+    """
+    Sliding window in-memory rate limiter per client IP address.
+    Tracks request timestamps within a configurable window and purges expired entries.
+    """
+
+    def __init__(self, window_seconds: int = 60, max_tracked_keys: int = 10000):
+        """
+        Initialize the rate limiter.
+
+        Args:
+            window_seconds (int): Duration of the sliding window in seconds (default: 60).
+            max_tracked_keys (int): Maximum unique keys to retain before pruning stale records.
+        """
+        self.window_seconds = window_seconds
+        self.max_tracked_keys = max_tracked_keys
+        self.requests: Dict[str, List[float]] = defaultdict(list)
+
+    def is_allowed(self, client_ip: str, route_bucket: str, max_requests: int) -> bool:
+        """
+        Check if an incoming request from a client IP within a route bucket is allowed.
+
+        Args:
+            client_ip (str): Client IP address or host string.
+            route_bucket (str): Route category identifier (e.g. 'search', 'recommend').
+            max_requests (int): Maximum allowed requests within the sliding window.
+
+        Returns:
+            bool: True if allowed, False if the client has exceeded the limit.
+        """
+        now = time.time()
+        key = f"{client_ip}:{route_bucket}"
+        cutoff = now - self.window_seconds
+
+        # Prune memory if cache exceeds capacity threshold
+        if len(self.requests) > self.max_tracked_keys:
+            stale_keys = [k for k, v in self.requests.items() if not v or v[-1] < cutoff]
+            for sk in stale_keys:
+                self.requests.pop(sk, None)
+
+        valid_timestamps = [t for t in self.requests[key] if t > cutoff]
+
+        if len(valid_timestamps) >= max_requests:
+            self.requests[key] = valid_timestamps
+            return False
+
+        valid_timestamps.append(now)
+        self.requests[key] = valid_timestamps
+        return True
+
+
+rate_limiter = InMemoryRateLimiter(window_seconds=60)
 
 
 @asynccontextmanager
@@ -34,16 +99,16 @@ async def lifespan(app: FastAPI):
         None: Yields execution back to the FastAPI runtime.
     """
     global recommender
-    print("[Server] Initializing Vibelnyc ML Recommender Engine...")
+    logger.info("Initializing Vibelnyc ML Recommender Engine...")
     try:
         recommender = VibeRecommender()
-        print("[Server] ML Engine loaded and ready for queries.")
+        logger.info("ML Engine loaded and ready for queries.")
     except Exception as e:
-        print(f"[Server Warning] Could not load pre-trained models: {e}")
-        print("[Server Warning] Run `python src/train_engine.py` to generate model artifacts.")
+        logger.error("Could not load pre-trained models: %s", e)
+        logger.warning("Run `python src/train_engine.py` to generate model artifacts.")
         recommender = None
     yield
-    print("[Server] Shutting down Vibelnyc Server.")
+    logger.info("Shutting down Vibelnyc Server.")
 
 
 app = FastAPI(
@@ -70,17 +135,88 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_and_rate_limit_middleware(request: Request, call_next):
+    """
+    HTTP Middleware enforcing sliding-window client IP rate limiting and
+    injecting hardened HTTP security response headers.
+
+    Args:
+        request (Request): Incoming HTTP request.
+        call_next: Next request handler in the ASGI pipeline.
+
+    Returns:
+        Response: HTTP response decorated with security headers or 429 error payload.
+    """
+    # Allow CORS preflight requests without rate consumption
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    elif request.client:
+        client_ip = request.client.host
+    else:
+        client_ip = "unknown"
+
+    path = request.url.path
+
+    # Define rate limit tiers
+    if path.startswith("/api/recommend"):
+        limit = 30  # 30 requests per minute for recommendation calculation
+        bucket = "recommend"
+    elif path.startswith("/api/search"):
+        limit = 60  # 60 requests per minute for autocomplete searches
+        bucket = "search"
+    else:
+        limit = 120  # 120 requests per minute for general routes
+        bucket = "general"
+
+    if not rate_limiter.is_allowed(client_ip, bucket, limit):
+        logger.warning("Rate limit exceeded for IP %s on path %s", client_ip, path)
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": "Rate limit exceeded. Please try again later."},
+            headers={"Retry-After": "60"},
+        )
+
+    response: Response = await call_next(request)
+
+    # Inject baseline HTTP security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+    return response
+
+
 # --- Pydantic Schemas ---
 class RecommendRequest(BaseModel):
-    """Request payload for track-to-track recommendation."""
-    track_name: str = Field(..., description="Name of the seed track to match", min_length=1)
-    artist_name: Optional[str] = Field(None, description="Optional artist name to narrow down seed track")
+    """Request payload for track-to-track recommendation with input length constraints."""
+    track_name: str = Field(
+        ...,
+        description="Name of the seed track to match",
+        min_length=1,
+        max_length=128,
+    )
+    artist_name: Optional[str] = Field(
+        None,
+        description="Optional artist name to narrow down seed track",
+        max_length=128,
+    )
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
 
 
 class MoodRecommendRequest(BaseModel):
-    """Request payload for mood archetype recommendation."""
-    mood: str = Field(..., description="Mood preset: 'melancholy', 'high-energy', 'chill', or 'pop'")
+    """Request payload for mood archetype recommendation with strict enum validation."""
+    mood: Literal["melancholy", "high-energy", "chill", "pop"] = Field(
+        ...,
+        description="Mood preset: 'melancholy', 'high-energy', 'chill', or 'pop'",
+        max_length=32,
+    )
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
 
 
@@ -123,15 +259,15 @@ async def health_check() -> Dict[str, Any]:
 
 @app.get("/api/search", tags=["Search"])
 async def search_tracks(
-    q: str = Query(..., min_length=1, description="Track title or artist query for autocomplete"),
+    q: str = Query(..., min_length=1, max_length=64, description="Track title or artist query for autocomplete"),
     limit: int = Query(5, ge=1, le=20, description="Max results to return"),
 ) -> Dict[str, Any]:
     """
     Performs fast substring search on track titles and artist names for frontend autocomplete combobox.
 
     Args:
-        q (str): Case-insensitive search query string.
-        limit (int): Maximum number of search candidates to return.
+        q (str): Case-insensitive search query string (max 64 chars).
+        limit (int): Maximum number of search candidates to return (1-20).
 
     Returns:
         Dict[str, Any]: Query metadata and list of matching track items with popularity.
@@ -166,7 +302,7 @@ async def recommend_tracks(payload: RecommendRequest) -> Dict[str, Any]:
         Dict[str, Any]: Complete recommendation envelope with seed track, cluster info, and candidate list.
 
     Raises:
-        HTTPException: 503 if models are not loaded, 404 if seed track is not found, 500 on internal errors.
+        HTTPException: 503 if models not loaded, 404 if seed track not found, 500 on internal errors.
     """
     if recommender is None:
         raise HTTPException(
@@ -182,14 +318,16 @@ async def recommend_tracks(payload: RecommendRequest) -> Dict[str, Any]:
         )
         return results
     except ValueError as e:
+        logger.warning("Seed track lookup failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
         )
     except Exception as e:
+        logger.exception("Unexpected error occurred in recommend_tracks: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Recommendation engine error: {str(e)}",
+            detail="An internal error occurred while generating track recommendations.",
         )
 
 
@@ -206,7 +344,7 @@ async def recommend_mood(payload: MoodRecommendRequest) -> Dict[str, Any]:
         Dict[str, Any]: Complete recommendation envelope formatted identically to track recommendations.
 
     Raises:
-        HTTPException: 503 if models not loaded, 400 if mood identifier is invalid, 500 on internal errors.
+        HTTPException: 503 if models not loaded, 400 if mood identifier invalid, 500 on internal errors.
     """
     if recommender is None:
         raise HTTPException(
@@ -221,14 +359,16 @@ async def recommend_mood(payload: MoodRecommendRequest) -> Dict[str, Any]:
         )
         return results
     except ValueError as e:
+        logger.warning("Invalid mood specified: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        logger.exception("Unexpected error occurred in recommend_mood: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Mood recommendation error: {str(e)}",
+            detail="An internal error occurred while generating mood recommendations.",
         )
 
 

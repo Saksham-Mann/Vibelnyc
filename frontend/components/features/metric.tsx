@@ -1,0 +1,15 @@
+interface MetricProps {
+  label: string
+  value: number
+}
+
+export function Metric({ label, value }: MetricProps) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <div className="metric-track">
+        <div style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  )
+}

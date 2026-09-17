@@ -23,7 +23,16 @@ recommender: Optional[VibeRecommender] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Loads trained ML models and dataset into memory on startup."""
+    """
+    Application lifespan manager that loads pre-trained ML artifacts into memory
+    upon server startup and gracefully cleans up resources upon shutdown.
+
+    Args:
+        app (FastAPI): The running FastAPI instance.
+
+    Yields:
+        None: Yields execution back to the FastAPI runtime.
+    """
     global recommender
     print("[Server] Initializing Vibelnyc ML Recommender Engine...")
     try:
@@ -63,19 +72,27 @@ app.add_middleware(
 
 # --- Pydantic Schemas ---
 class RecommendRequest(BaseModel):
+    """Request payload for track-to-track recommendation."""
     track_name: str = Field(..., description="Name of the seed track to match", min_length=1)
     artist_name: Optional[str] = Field(None, description="Optional artist name to narrow down seed track")
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
 
 
 class MoodRecommendRequest(BaseModel):
+    """Request payload for mood archetype recommendation."""
     mood: str = Field(..., description="Mood preset: 'melancholy', 'high-energy', 'chill', or 'pop'")
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
 
 
 # --- API Routes ---
 @app.get("/", tags=["General"])
-async def root():
+async def root() -> Dict[str, Any]:
+    """
+    Root endpoint providing service metadata and API directory links.
+
+    Returns:
+        Dict[str, Any]: API name, online status, engine readiness, and endpoint links.
+    """
     return {
         "name": "Vibelnyc API",
         "status": "online",
@@ -90,7 +107,13 @@ async def root():
 
 
 @app.get("/health", tags=["General"])
-async def health_check():
+async def health_check() -> Dict[str, Any]:
+    """
+    Health check endpoint reporting engine status and indexed track volume.
+
+    Returns:
+        Dict[str, Any]: Health status ('healthy'), engine_loaded flag, and total_tracks count.
+    """
     return {
         "status": "healthy",
         "engine_loaded": recommender is not None,
@@ -102,8 +125,20 @@ async def health_check():
 async def search_tracks(
     q: str = Query(..., min_length=1, description="Track title or artist query for autocomplete"),
     limit: int = Query(5, ge=1, le=20, description="Max results to return"),
-):
-    """Returns top matching track titles and artists for the frontend search bar."""
+) -> Dict[str, Any]:
+    """
+    Performs fast substring search on track titles and artist names for frontend autocomplete combobox.
+
+    Args:
+        q (str): Case-insensitive search query string.
+        limit (int): Maximum number of search candidates to return.
+
+    Returns:
+        Dict[str, Any]: Query metadata and list of matching track items with popularity.
+
+    Raises:
+        HTTPException: 503 if ML Engine models are not yet loaded.
+    """
     if recommender is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -119,10 +154,19 @@ async def search_tracks(
 
 
 @app.post("/api/recommend", tags=["Recommendation"])
-async def recommend_tracks(payload: RecommendRequest):
+async def recommend_tracks(payload: RecommendRequest) -> Dict[str, Any]:
     """
-    Recommends top N tracks closest in 8D audio feature space to the given seed track.
-    Computes exact cosine similarity and feature deltas.
+    Recommends top N tracks closest in 8D audio feature space to the requested seed track.
+    Computes exact cosine similarity and feature deltas for energy, valence, and danceability.
+
+    Args:
+        payload (RecommendRequest): Request body containing track_name, artist_name, and n_results.
+
+    Returns:
+        Dict[str, Any]: Complete recommendation envelope with seed track, cluster info, and candidate list.
+
+    Raises:
+        HTTPException: 503 if models are not loaded, 404 if seed track is not found, 500 on internal errors.
     """
     if recommender is None:
         raise HTTPException(
@@ -150,10 +194,19 @@ async def recommend_tracks(payload: RecommendRequest):
 
 
 @app.post("/api/recommend/mood", tags=["Recommendation"])
-async def recommend_mood(payload: MoodRecommendRequest):
+async def recommend_mood(payload: MoodRecommendRequest) -> Dict[str, Any]:
     """
-    Recommends top tracks matching sonic archetype vectors for
+    Recommends top tracks matching predefined sonic archetype vectors for
     'melancholy', 'high-energy', 'chill', or 'pop'.
+
+    Args:
+        payload (MoodRecommendRequest): Request body containing mood string and n_results.
+
+    Returns:
+        Dict[str, Any]: Complete recommendation envelope formatted identically to track recommendations.
+
+    Raises:
+        HTTPException: 503 if models not loaded, 400 if mood identifier is invalid, 500 on internal errors.
     """
     if recommender is None:
         raise HTTPException(

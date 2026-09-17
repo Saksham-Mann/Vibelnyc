@@ -1,5 +1,6 @@
 """
 Data preprocessing, cleaning, and normalization pipeline for Vibelnyc audio tracks.
+Handles deduplication, missing values, and min-max scaling of continuous audio features.
 """
 
 from pathlib import Path
@@ -34,7 +35,13 @@ SCALED_FEATURE_COLS = [
 COLS_TO_SCALE = ['loudness', 'tempo']
 
 
-def get_default_paths():
+def get_default_paths() -> Tuple[Path, Path]:
+    """
+    Resolves the canonical paths for dataset input and model artifact storage.
+
+    Returns:
+        Tuple[Path, Path]: Path to the spotify_tracks.csv dataset and models directory.
+    """
     src_dir = Path(__file__).resolve().parent
     backend_dir = src_dir.parent
     csv_path = backend_dir / 'data' / 'spotify_tracks.csv'
@@ -49,18 +56,29 @@ def preprocess_data(
 ) -> Tuple[pd.DataFrame, MinMaxScaler]:
     """
     Loads, cleans, and normalizes the Spotify tracks dataset.
-    - Drops null rows.
-    - Drops duplicates by track_id and (track_name, artists).
-    - Normalizes loudness and tempo using MinMaxScaler to standard [0.0, 1.0].
-    - Clips standard features to [0.0, 1.0].
-    - Saves scaler and processed tracks to models/ if save_artifacts is True.
+    - Drops null rows across essential attributes.
+    - Drops duplicate track_id entries.
+    - Performs case-insensitive deduplication on (track_name, artists).
+    - Fits MinMaxScaler on loudness and tempo to bring all dimensions to [0.0, 1.0].
+    - Clips standard unit audio dimensions strictly to [0.0, 1.0].
+    - Saves fitted scaler to models/ directory when requested.
+
+    Args:
+        csv_path (Optional[Path]): Custom path to raw dataset CSV file.
+        models_dir (Optional[Path]): Destination directory for serialized scaler.
+        save_artifacts (bool): Whether to persist scaler.joblib to disk.
+
+    Returns:
+        Tuple[pd.DataFrame, MinMaxScaler]: Cleaned DataFrame and fitted MinMaxScaler.
+
+    Raises:
+        FileNotFoundError: If the source CSV dataset does not exist on disk.
     """
     default_csv, default_models = get_default_paths()
     csv_file = Path(csv_path) if csv_path else default_csv
     target_models_dir = Path(models_dir) if models_dir else default_models
 
     if not csv_file.exists():
-        # Fallback to dataset.csv if spotify_tracks.csv was not found
         fallback = csv_file.parent / 'dataset.csv'
         if fallback.exists():
             csv_file = fallback
@@ -124,7 +142,15 @@ def preprocess_data(
 def extract_feature_vector(
     track_row: pd.Series,
 ) -> np.ndarray:
-    """Extracts the 8D normalized feature vector for a track row."""
+    """
+    Extracts the 8-dimensional normalized feature vector for a given track row.
+
+    Args:
+        track_row (pd.Series): Single track record containing scaled audio columns.
+
+    Returns:
+        np.ndarray: 1D float64 array representing the track in 8D audio space.
+    """
     return track_row[SCALED_FEATURE_COLS].values.astype(np.float64)
 
 

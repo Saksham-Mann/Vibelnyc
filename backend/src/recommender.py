@@ -64,9 +64,18 @@ MOOD_PRESETS: Dict[str, Dict[str, float]] = {
 
 
 class VibeRecommender:
-    """Production recommendation engine caching models and vectors in memory."""
+    """
+    Production recommendation engine caching pre-trained models and feature vectors in memory.
+    Supports fast vector cosine similarity, vibe clustering lookup, and popularity-weighted search.
+    """
 
-    def __init__(self, models_dir: Optional[Path] = None):
+    def __init__(self, models_dir: Optional[Path] = None) -> None:
+        """
+        Initializes the VibeRecommender instance and loads serialized model artifacts.
+
+        Args:
+            models_dir (Optional[Path]): Custom path to folder containing model joblib and parquet files.
+        """
         _, default_models = get_default_paths()
         self.models_dir = Path(models_dir) if models_dir else default_models
 
@@ -80,7 +89,13 @@ class VibeRecommender:
         self.load_artifacts()
 
     def load_artifacts(self) -> None:
-        """Loads all trained models and dataset into memory."""
+        """
+        Loads preprocessed parquet dataset, MinMaxScaler, NearestNeighbors model,
+        KMeans model, and cluster metadata into memory.
+
+        Raises:
+            FileNotFoundError: If required model artifacts are missing from the models directory.
+        """
         parquet_path = self.models_dir / 'processed_tracks.parquet'
         scaler_path = self.models_dir / 'scaler.joblib'
         nn_path = self.models_dir / 'nearest_neighbors.joblib'
@@ -111,14 +126,20 @@ class VibeRecommender:
 
     def search_tracks(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Fast autocomplete search for track titles and artists.
-        Prioritizes by popularity.
+        Performs fast autocomplete search for track titles and artists,
+        prioritizing more popular songs.
+
+        Args:
+            query (str): Substring search text entered by the user.
+            limit (int): Maximum number of search candidates to return.
+
+        Returns:
+            List[Dict[str, Any]]: List of matching tracks with track_id, track_name, artists, and popularity.
         """
         if not query or not query.strip():
             return []
 
         q = query.strip().lower()
-        # Case-insensitive contains filter across track_name and artists
         mask = (
             self.df['track_name'].str.lower().str.contains(q, na=False, regex=False)
             | self.df['artists'].str.lower().str.contains(q, na=False, regex=False)
@@ -128,7 +149,6 @@ class VibeRecommender:
         if matches.empty:
             return []
 
-        # Sort by popularity descending
         sorted_matches = matches.sort_values(by='popularity', ascending=False).head(limit)
 
         results = []
@@ -147,7 +167,16 @@ class VibeRecommender:
         track_name: str,
         artist_name: Optional[str] = None,
     ) -> Optional[pd.Series]:
-        """Finds best matching track row in dataset."""
+        """
+        Locates the best candidate seed track record in the dataset using exact or fuzzy title matching.
+
+        Args:
+            track_name (str): Title of the song to search for.
+            artist_name (Optional[str]): Optional artist name to disambiguate identical titles.
+
+        Returns:
+            Optional[pd.Series]: Matched track row from the DataFrame or None if not found.
+        """
         t_clean = track_name.strip().lower()
 
         if artist_name and artist_name.strip():
@@ -172,7 +201,15 @@ class VibeRecommender:
         return None
 
     def _format_track_features(self, row: pd.Series) -> Dict[str, Any]:
-        """Extracts and normalizes features for API consumption (0-100 scale)."""
+        """
+        Extracts and converts audio dimensions to standardized percentage scale (0-100) for frontend rendering.
+
+        Args:
+            row (pd.Series): DataFrame row containing raw acoustic features.
+
+        Returns:
+            Dict[str, Any]: Formatted dictionary containing energy, valence, danceability, and tempo.
+        """
         return {
             'energy': round(float(row['energy']) * 100, 1),
             'valence': round(float(row['valence']) * 100, 1),
@@ -189,8 +226,19 @@ class VibeRecommender:
         n_results: int = 3,
     ) -> Dict[str, Any]:
         """
-        Recommends top N tracks based on exact cosine distance to a seed track.
-        Calculates similarity percentage and feature deltas.
+        Recommends candidate tracks matching the 8D audio profile of a seed track.
+        Computes cosine similarity percentage and feature deltas.
+
+        Args:
+            track_name (str): Title of the seed track.
+            artist_name (Optional[str]): Optional artist name.
+            n_results (int): Number of top recommendations to return.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing seed_track details, cluster_info, and recommendations list.
+
+        Raises:
+            ValueError: If the seed track cannot be found in the dataset.
         """
         seed_row = self.find_seed_track(track_name, artist_name)
         if seed_row is None:
@@ -206,7 +254,6 @@ class VibeRecommender:
             'name', f"Cluster #{seed_cluster_id:02d}"
         )
 
-        # Query NearestNeighbors (request extra to easily filter out seed track itself)
         k_lookup = min(n_results + 10, len(self.df))
         distances, indices = self.nn_model.kneighbors(seed_vector, n_neighbors=k_lookup)
 
@@ -224,7 +271,6 @@ class VibeRecommender:
             similarity_percentage = round((1.0 - float(dist)) * 100, 1)
             cand_features = self._format_track_features(cand_row)
 
-            # Feature deltas
             deltas = {
                 'energy': round(cand_features['energy'] - seed_features['energy'], 1),
                 'valence': round(cand_features['valence'] - seed_features['valence'], 1),
@@ -266,8 +312,18 @@ class VibeRecommender:
         n_results: int = 3,
     ) -> Dict[str, Any]:
         """
-        Recommends tracks based on target mood archetype vector.
-        Supported moods: 'melancholy', 'high-energy', 'chill', 'pop'.
+        Recommends tracks matching a predefined mood archetype vector
+        ('melancholy', 'high-energy', 'chill', 'pop').
+
+        Args:
+            mood (str): Mood preset key.
+            n_results (int): Number of top candidate recommendations to return.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing archetype seed_track, cluster_info, and recommendations.
+
+        Raises:
+            ValueError: If the mood key is not recognized in MOOD_PRESETS.
         """
         m_key = mood.strip().lower().replace('_', '-')
         if m_key not in MOOD_PRESETS:
@@ -278,13 +334,11 @@ class VibeRecommender:
         preset_dict = MOOD_PRESETS[m_key]
         vector = np.array([preset_dict[col] for col in SCALED_FEATURE_COLS], dtype=np.float64).reshape(1, -1)
 
-        # Predict cluster from KMeans
         cluster_id = int(self.kmeans.predict(vector)[0])
         cluster_name = self.cluster_metadata.get(cluster_id, {}).get(
             'name', f"Cluster #{cluster_id:02d}"
         )
 
-        # Archetype raw features
         archetype_features = {
             'energy': round(preset_dict['energy'] * 100, 1),
             'valence': round(preset_dict['valence'] * 100, 1),

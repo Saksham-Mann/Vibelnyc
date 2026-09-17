@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Large data files
+# Uncomment if you prefer not to track raw datasets in git:
+# data/*.csv

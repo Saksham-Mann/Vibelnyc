@@ -1,0 +1,66 @@
+{
+  "0": {
+    "name": "Deep Focus & Ambient",
+    "description": "Atmospheric, instrumental soundscapes and contemplative textures.",
+    "centroid_energy": 0.212,
+    "centroid_valence": 0.223,
+    "centroid_danceability": 0.396,
+    "centroid_acousticness": 0.862
+  },
+  "1": {
+    "name": "Mainstream Pop & Anthems",
+    "description": "Euphoric, feel-good hits with bright melodies and infectious hooks.",
+    "centroid_energy": 0.782,
+    "centroid_valence": 0.739,
+    "centroid_danceability": 0.67,
+    "centroid_acousticness": 0.11
+  },
+  "2": {
+    "name": "Deep Focus & Ambient",
+    "description": "Atmospheric, instrumental soundscapes and contemplative textures.",
+    "centroid_energy": 0.767,
+    "centroid_valence": 0.338,
+    "centroid_danceability": 0.561,
+    "centroid_acousticness": 0.071
+  },
+  "3": {
+    "name": "Acoustic Lo-Fi & Coffeehouse",
+    "description": "Warm analog acoustics, gentle organic instrumentation, and chill warmth.",
+    "centroid_energy": 0.316,
+    "centroid_valence": 0.317,
+    "centroid_danceability": 0.48,
+    "centroid_acousticness": 0.798
+  },
+  "4": {
+    "name": "Dynamic Indie & Alternative",
+    "description": "Electric guitars, bold dynamics, and rhythmic indie vibrations.",
+    "centroid_energy": 0.608,
+    "centroid_valence": 0.728,
+    "centroid_danceability": 0.644,
+    "centroid_acousticness": 0.602
+  },
+  "5": {
+    "name": "Dynamic Indie & Alternative",
+    "description": "Electric guitars, bold dynamics, and rhythmic indie vibrations.",
+    "centroid_energy": 0.88,
+    "centroid_valence": 0.326,
+    "centroid_danceability": 0.461,
+    "centroid_acousticness": 0.032
+  },
+  "6": {
+    "name": "Atmospheric Eclectic",
+    "description": "Balanced sonic profile with multifaceted harmonic depth.",
+    "centroid_energy": 0.557,
+    "centroid_valence": 0.33,
+    "centroid_danceability": 0.589,
+    "centroid_acousticness": 0.22
+  },
+  "7": {
+    "name": "Dynamic Indie & Alternative",
+    "description": "Electric guitars, bold dynamics, and rhythmic indie vibrations.",
+    "centroid_energy": 0.689,
+    "centroid_valence": 0.429,
+    "centroid_danceability": 0.568,
+    "centroid_acousticness": 0.782
+  }
+}

@@ -1,4 +1,4 @@
-# Vibelnyc — Sonic DNA Music Recommendation Engine
+# Vibelnyc - Sonic DNA Music Recommendation Engine
 
 **Vibelnyc** is an AI-powered music recommendation platform featuring an unsupervised Machine Learning recommendation engine, a FastAPI backend, and a Neo-Brutalist Next.js web application.
 

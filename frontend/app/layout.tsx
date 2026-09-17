@@ -2,8 +2,11 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
+/**
+ * Global site metadata configuration for SEO and search crawlers.
+ */
 export const metadata: Metadata = {
-  title: 'Vibelnyc — Find Tracks By Sonic DNA',
+  title: 'Vibelnyc - Find Tracks By Sonic DNA',
   description: 'Discover music that matches your sonic DNA with Vibelnyc.',
   generator: 'v0.app',
   icons: {
@@ -25,6 +28,9 @@ export const metadata: Metadata = {
   },
 }
 
+/**
+ * Responsive viewport and device theme configuration.
+ */
 export const viewport: Viewport = {
   colorScheme: 'light dark',
   themeColor: [
@@ -33,6 +39,12 @@ export const viewport: Viewport = {
   ],
 }
 
+/**
+ * Root application layout wrapper configuring html, body font styling, and analytics.
+ *
+ * @param props Contains children React nodes to render within the document shell.
+ * @returns JSX Element rendering the root HTML tree.
+ */
 export default function RootLayout({
   children,
 }: Readonly<{

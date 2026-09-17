@@ -1,4 +1,3 @@
-import { Pause, Play, SkipForward } from 'lucide-react'
 import { Track } from '@/types/music'
 import { AlbumArt } from './album-art'
 import { Metric } from './metric'
@@ -12,13 +11,25 @@ interface TrackCardProps {
 }
 
 /**
- * Renders a Neo-Brutalist card for an individual recommended track,
- * displaying metadata, percentage match score, feature deltas, and playback controls.
+ * Renders a Neo-Brutalist card for an individual recommended track.
+ * Integrates an official Spotify mini-player iframe embed with graceful fallback
+ * and an external "+ ADD" action link directing to the track on Spotify.
  *
- * @param props Contains the track details to render.
+ * @param props Component properties containing the track details to render.
  * @returns JSX Element representing the track recommendation card.
  */
 export function TrackCard({ track }: TrackCardProps) {
+  const spotifyId =
+    track.spotifyId && track.spotifyId.trim().length > 0
+      ? track.spotifyId.trim()
+      : null
+
+  const spotifyTrackUrl = spotifyId
+    ? `https://open.spotify.com/track/${spotifyId}`
+    : `https://open.spotify.com/search/${encodeURIComponent(
+        `${track.title} ${track.artist}`
+      )}`
+
   return (
     <article className="track-card">
       <div className="track-top">
@@ -31,11 +42,12 @@ export function TrackCard({ track }: TrackCardProps) {
             <span
               style={{
                 fontSize: '0.7rem',
-                color: '#aaa',
+                color: '#77736b',
                 display: 'block',
                 marginTop: '2px',
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
+                fontWeight: 700,
               }}
             >
               {track.clusterName}
@@ -43,6 +55,28 @@ export function TrackCard({ track }: TrackCardProps) {
           )}
         </div>
       </div>
+
+      {spotifyId ? (
+        <div className="spotify-embed-container">
+          <iframe
+            src={`https://open.spotify.com/embed/track/${spotifyId}?utm_source=generator&theme=0`}
+            width="100%"
+            height="80"
+            frameBorder="0"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="lazy"
+            style={{ display: 'block', border: 0 }}
+            title={`Spotify preview for ${track.title} by ${track.artist}`}
+          />
+        </div>
+      ) : (
+        <div
+          className="spotify-embed-fallback"
+          aria-label="Audio preview unavailable"
+        >
+          [ AUDIO PREVIEW UNAVAILABLE ]
+        </div>
+      )}
 
       <div className="metrics">
         <Metric label="ENG" value={track.energy} />
@@ -56,7 +90,7 @@ export function TrackCard({ track }: TrackCardProps) {
             display: 'flex',
             gap: '8px',
             fontSize: '0.68rem',
-            color: '#888',
+            color: '#77736b',
             padding: '2px 0 6px 0',
             fontFamily: 'monospace',
           }}
@@ -98,20 +132,15 @@ export function TrackCard({ track }: TrackCardProps) {
       )}
 
       <div className="track-actions">
-        <div className="icon-actions">
-          <button type="button" aria-label="Play track">
-            <Play size={16} fill="currentColor" />
-          </button>
-          <button type="button" aria-label="Pause track">
-            <Pause size={16} />
-          </button>
-          <button type="button" aria-label="Skip track">
-            <SkipForward size={16} fill="currentColor" />
-          </button>
-        </div>
-        <button type="button" className="play-link">
-          + PLAY
-        </button>
+        <a
+          href={spotifyTrackUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="add-track-link"
+          aria-label={`Add ${track.title} by ${track.artist} on Spotify`}
+        >
+          + ADD
+        </a>
       </div>
     </article>
   )

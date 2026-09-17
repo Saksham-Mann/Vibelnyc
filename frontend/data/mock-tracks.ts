@@ -30,6 +30,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 38,
       dance: 55,
       match: 98,
+      spotifyId: '2SpEJaHR9KyODAC70DIuhu',
     },
     {
       title: 'Weird Fishes',
@@ -40,6 +41,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 44,
       dance: 58,
       match: 98,
+      spotifyId: '4wajJ1fs4VNVQZireTy797',
     },
     {
       title: 'Unreve Fin',
@@ -50,6 +52,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 35,
       dance: 50,
       match: 98,
+      // Deliberately omitted to verify the "[ AUDIO PREVIEW UNAVAILABLE ]" fallback
     },
   ],
   'HIGH ENERGY': [
@@ -62,6 +65,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 76,
       dance: 88,
       match: 97,
+      spotifyId: '33yAE2vdM2U0I5m6a6j458',
     },
     {
       title: 'Go!',
@@ -72,6 +76,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 72,
       dance: 93,
       match: 96,
+      spotifyId: '0Z6q6XgI2rY8165XJ7H5P1',
     },
     {
       title: '1901',
@@ -82,6 +87,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 79,
       dance: 86,
       match: 95,
+      spotifyId: '6jZh1H8KoOxd9UQfyzYRiz',
     },
   ],
   CHILL: [
@@ -94,6 +100,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 62,
       dance: 47,
       match: 97,
+      spotifyId: '6koWevx9MqN6efQ6qreIbm',
     },
     {
       title: 'Kerala',
@@ -126,6 +133,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 84,
       dance: 81,
       match: 97,
+      spotifyId: '2YEu1y09c0FpU38gB3k3k7',
     },
     {
       title: 'Midnight City',
@@ -136,6 +144,7 @@ export const MOCK_TRACKS: Record<Mood, Track[]> = {
       valence: 68,
       dance: 76,
       match: 96,
+      spotifyId: '6GyFP1nfCDB8lbD2bG0Hq9',
     },
     {
       title: 'Sweet Disposition',
@@ -157,4 +166,5 @@ export const SEED_TRACK: Track = {
   ...MOCK_TRACKS.MELANCHOLY[1],
   title: 'Midnight City',
   artist: 'M83',
+  spotifyId: '6GyFP1nfCDB8lbD2bG0Hq9',
 }

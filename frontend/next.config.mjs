@@ -37,6 +37,7 @@ const nextConfig = {
               "img-src 'self' data: https:",
               "font-src 'self' data:",
               "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000",
+              "frame-src 'self' https://open.spotify.com https://*.spotify.com",
               "frame-ancestors 'none'",
             ].join('; '),
           },

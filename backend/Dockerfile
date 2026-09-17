@@ -12,13 +12,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Create dedicated unprivileged non-root user (UID 10001)
+RUN groupadd -g 10001 appgroup && \
+    useradd -u 10001 -g appgroup -s /sbin/nologin -d /app appuser
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source code and trained models
-COPY . .
+# Copy application source code with non-root ownership
+COPY --chown=appuser:appgroup . .
+
+# Switch to non-root user
+USER appuser
 
 # Expose API port
 EXPOSE 8000

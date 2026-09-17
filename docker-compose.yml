@@ -5,18 +5,27 @@ services:
       dockerfile: Dockerfile
     container_name: vibelnyc-backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - PORT=8000
     volumes:
-      - ./backend/models:/app/models
+      - ./backend/models:/app/models:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
 
   frontend:
     build:
@@ -24,11 +33,20 @@ services:
       dockerfile: Dockerfile
     container_name: vibelnyc-frontend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - PORT=3000
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       backend:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M

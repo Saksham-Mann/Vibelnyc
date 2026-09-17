@@ -159,6 +159,32 @@ def train_and_persist_models(
     df.to_parquet(parquet_path, engine='pyarrow', index=False)
     print(" -> Processed tracks Parquet saved successfully.")
 
+    # 6. Compute Cryptographic SHA-256 Checksums for Integrity Verification
+    import hashlib
+
+    artifacts_to_hash = [
+        'scaler.joblib',
+        'nearest_neighbors.joblib',
+        'kmeans.joblib',
+        'processed_tracks.parquet',
+        'cluster_metadata.json',
+    ]
+
+    checksums = {}
+    for filename in artifacts_to_hash:
+        target_file = models_target / filename
+        if target_file.exists():
+            hasher = hashlib.sha256()
+            with open(target_file, 'rb') as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            checksums[filename] = hasher.hexdigest()
+
+    checksum_path = models_target / 'checksums.json'
+    with open(checksum_path, 'w', encoding='utf-8') as f:
+        json.dump(checksums, f, indent=2)
+    print(f" -> Artifact checksums saved to: {checksum_path}")
+
     print("\n[Summary] Vibelnyc model training completed successfully!")
     print(f"Artifacts generated in: {models_target}")
 

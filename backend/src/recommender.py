@@ -19,6 +19,21 @@ from preprocess import (
     get_default_paths,
 )
 
+class SecurityError(RuntimeError):
+    """Raised when cryptographic checksum or integrity validation fails."""
+    pass
+
+
+def compute_sha256(filepath: Path) -> str:
+    """Computes the SHA-256 cryptographic digest of a local file."""
+    import hashlib
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 MOOD_PRESETS: Dict[str, Dict[str, float]] = {
     'melancholy': {
         'valence': 0.15,
@@ -85,16 +100,48 @@ class VibeRecommender:
         self.kmeans: KMeans = None
         self.cluster_metadata: Dict[int, Dict[str, Any]] = {}
         self.feature_matrix: np.ndarray = None
+        self._search_cache: Dict[str, List[Dict[str, Any]]] = {}
 
         self.load_artifacts()
+
+    @staticmethod
+    def _compute_sha256(filepath: Path) -> str:
+        """Computes the SHA-256 cryptographic digest of a local file."""
+        return compute_sha256(filepath)
+
+    def _verify_artifacts_integrity(self) -> None:
+        """
+        Validates model artifacts against checksums.json before deserialization.
+        Mitigates arbitrary code execution attacks via tampered joblib/pickle files.
+        """
+        checksum_path = self.models_dir / 'checksums.json'
+        if not checksum_path.exists():
+            print("[Security Warning] checksums.json not found. Proceeding with caution.")
+            return
+
+        with open(checksum_path, 'r', encoding='utf-8') as f:
+            expected_checksums: Dict[str, str] = json.load(f)
+
+        for filename, expected_hash in expected_checksums.items():
+            target_path = self.models_dir / filename
+            if target_path.exists():
+                actual_hash = self._compute_sha256(target_path)
+                if actual_hash != expected_hash:
+                    raise SecurityError(
+                        f"Cryptographic integrity verification failed for {filename}! "
+                        f"Expected SHA-256: {expected_hash}, got: {actual_hash}. "
+                        "Aborting model loading to prevent arbitrary code execution."
+                    )
+        print("[Security] All model artifact SHA-256 checksums successfully verified.")
 
     def load_artifacts(self) -> None:
         """
         Loads preprocessed parquet dataset, MinMaxScaler, NearestNeighbors model,
-        KMeans model, and cluster metadata into memory.
+        KMeans model, and cluster metadata into memory after verifying cryptographic integrity.
 
         Raises:
             FileNotFoundError: If required model artifacts are missing from the models directory.
+            SecurityError: If any model artifact fails cryptographic checksum verification.
         """
         parquet_path = self.models_dir / 'processed_tracks.parquet'
         scaler_path = self.models_dir / 'scaler.joblib'
@@ -108,9 +155,17 @@ class VibeRecommender:
                 "Run `python src/train_engine.py` to train and generate artifacts."
             )
 
+        # Cryptographic integrity check prior to deserialization
+        self._verify_artifacts_integrity()
+
         print(f"[Recommender] Loading processed dataset from: {parquet_path}")
         self.df = pd.read_parquet(parquet_path)
         self.feature_matrix = self.df[SCALED_FEATURE_COLS].values.astype(np.float64)
+
+        # Precompute combined lowercased search index column to avoid dynamic allocation DoS
+        self.df['search_index'] = (
+            self.df['track_name'].str.lower() + " " + self.df['artists'].str.lower()
+        ).fillna('')
 
         print("[Recommender] Loading models (scaler, nearest_neighbors, kmeans)...")
         self.scaler = joblib.load(scaler_path)
@@ -127,7 +182,7 @@ class VibeRecommender:
     def search_tracks(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Performs fast autocomplete search for track titles and artists,
-        prioritizing more popular songs.
+        using precomputed search index and LRU query caching to mitigate DoS.
 
         Args:
             query (str): Substring search text entered by the user.
@@ -139,11 +194,13 @@ class VibeRecommender:
         if not query or not query.strip():
             return []
 
-        q = query.strip().lower()
-        mask = (
-            self.df['track_name'].str.lower().str.contains(q, na=False, regex=False)
-            | self.df['artists'].str.lower().str.contains(q, na=False, regex=False)
-        )
+        q = query.strip().lower()[:64]
+        cache_key = f"{q}_{limit}"
+        if cache_key in self._search_cache:
+            return self._search_cache[cache_key]
+
+        # Use precomputed search_index for single pass search
+        mask = self.df['search_index'].str.contains(q, na=False, regex=False)
         matches = self.df[mask]
 
         if matches.empty:
@@ -160,6 +217,10 @@ class VibeRecommender:
                 'album_name': str(row.get('album_name', '')),
                 'popularity': int(row.get('popularity', 0)),
             })
+
+        if len(self._search_cache) > 500:
+            self._search_cache.clear()
+        self._search_cache[cache_key] = results
         return results
 
     def find_seed_track(

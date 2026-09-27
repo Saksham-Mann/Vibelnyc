@@ -34,6 +34,50 @@ SCALED_FEATURE_COLS = [
 
 COLS_TO_SCALE = ['loudness', 'tempo']
 
+SPANISH_LATIN_GENRES = {
+    'latin', 'latino', 'spanish', 'reggaeton', 'salsa', 'brazil', 'samba',
+    'forro', 'mpb', 'pagode', 'sertanejo', 'tango'
+}
+
+EAST_ASIAN_GENRES = {
+    'k-pop', 'j-pop', 'j-rock', 'mandopop', 'anime', 'cantopop', 'j-dance', 'j-idol'
+}
+
+FRENCH_GENRES = {'french', 'chanson'}
+
+GERMAN_GENRES = {'german'}
+
+INSTRUMENTAL_AMBIENT_GENRES = {
+    'ambient', 'classical', 'sleep', 'study', 'piano', 'soundtrack', 'chill', 'new-age', 'opera'
+}
+
+
+def assign_language_group(genre: Optional[str], instrumentalness: float) -> str:
+    """
+    Classifies a track into a standardized linguistic or instrumental category
+    based on its genre tag and instrumentalness score.
+
+    Args:
+        genre (Optional[str]): Raw genre string from the dataset.
+        instrumentalness (float): Continuous instrumentalness score between 0.0 and 1.0.
+
+    Returns:
+        str: Standardized language group identifier ('instrumental_ambient',
+             'spanish_latin', 'east_asian', 'french', 'german', or 'english').
+    """
+    g = str(genre).lower().strip() if pd.notna(genre) else ""
+    if float(instrumentalness) > 0.75 or g in INSTRUMENTAL_AMBIENT_GENRES:
+        return 'instrumental_ambient'
+    if g in SPANISH_LATIN_GENRES:
+        return 'spanish_latin'
+    if g in EAST_ASIAN_GENRES:
+        return 'east_asian'
+    if g in FRENCH_GENRES:
+        return 'french'
+    if g in GERMAN_GENRES:
+        return 'german'
+    return 'english'
+
 
 def get_default_paths() -> Tuple[Path, Path]:
     """
@@ -122,6 +166,14 @@ def preprocess_data(
     scaled_vals = scaler.fit_transform(df[COLS_TO_SCALE])
     df['norm_loudness'] = scaled_vals[:, 0].clip(0.0, 1.0)
     df['norm_tempo'] = scaled_vals[:, 1].clip(0.0, 1.0)
+    # Assign standardized language groups
+    if 'track_genre' in df.columns:
+        df['language_group'] = [
+            assign_language_group(g, inst)
+            for g, inst in zip(df['track_genre'], df['instrumentalness'])
+        ]
+    else:
+        df['language_group'] = 'other'
 
     # Reset index for continuous row mapping
     df = df.reset_index(drop=True)

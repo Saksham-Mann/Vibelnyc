@@ -70,17 +70,19 @@ export async function searchTracks(
 }
 
 /**
- * Requests track recommendations based on a seed track title and optional artist name.
+ * Requests track recommendations based on a seed track title, optional artist, and language filter.
  * @param trackName Title of the seed track to match.
  * @param artistName Optional artist name to narrow down seed track selection.
  * @param nResults Number of candidate recommendations to retrieve (default: 3).
+ * @param language Optional language group filter identifier (default: 'all').
  * @returns Promise resolving to the recommendation response including seed track and cluster info.
  * @throws {ApiError} With status 404 if the seed track is not found in the dataset.
  */
 export async function recommendByTrack(
   trackName: string,
   artistName?: string,
-  nResults: number = 3
+  nResults: number = 3,
+  language: string = 'all'
 ): Promise<RecommendResponse> {
   const url = `${API_BASE_URL}/api/recommend`
 
@@ -94,6 +96,7 @@ export async function recommendByTrack(
       track_name: trackName,
       artist_name: artistName || null,
       n_results: nResults,
+      language: language || 'all',
     }),
   })
 
@@ -109,15 +112,17 @@ export async function recommendByTrack(
 }
 
 /**
- * Requests recommendations based on a predefined mood archetype vector.
+ * Requests recommendations based on a predefined mood archetype vector and language filter.
  * @param mood Mood preset identifier ('melancholy', 'high-energy', 'chill', 'pop').
  * @param nResults Number of candidate recommendations to retrieve (default: 3).
+ * @param language Optional language group filter identifier (default: 'all').
  * @returns Promise resolving to the recommendation response for the selected mood.
  * @throws {ApiError} If the mood key is invalid or server encounters an error.
  */
 export async function recommendByMood(
   mood: string,
-  nResults: number = 3
+  nResults: number = 3,
+  language: string = 'all'
 ): Promise<RecommendResponse> {
   const normalizedMood = mood.trim().toLowerCase().replace(/\s+/g, '-')
   const url = `${API_BASE_URL}/api/recommend/mood`
@@ -131,6 +136,7 @@ export async function recommendByMood(
     body: JSON.stringify({
       mood: normalizedMood,
       n_results: nResults,
+      language: language || 'all',
     }),
   })
 

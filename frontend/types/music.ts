@@ -9,6 +9,26 @@
 export type Mood = 'MELANCHOLY' | 'HIGH ENERGY' | 'CHILL' | 'POP'
 
 /**
+ * Supported language filter categories.
+ */
+export type LanguageGroup =
+  | 'all'
+  | 'english'
+  | 'spanish_latin'
+  | 'east_asian'
+  | 'instrumental_ambient'
+
+/**
+ * UI configuration for Neo-Brutalist language filter toggle pills.
+ */
+export interface LanguageOption {
+  /** Identifier matching backend language_group category. */
+  id: LanguageGroup
+  /** Display label shown in the UI toggle pill. */
+  label: string
+}
+
+/**
  * Configuration options for rendering mood filter buttons.
  */
 export interface MoodOption {
@@ -74,6 +94,8 @@ export interface Track {
   clusterId?: number
   /** Descriptive name of the assigned vibe cluster. */
   clusterName?: string
+  /** Categorized language or linguistic archetype. */
+  languageGroup?: string
   /** Feature deltas relative to the active seed track. */
   deltas?: FeatureDeltas
 }
@@ -102,6 +124,8 @@ export interface SearchResultItem {
   album_name: string
   /** Spotify popularity score (0 - 100). */
   popularity: number
+  /** Categorized language group identifier. */
+  language_group?: string
 }
 
 /**
@@ -128,6 +152,8 @@ export interface SeedTrackResponse {
   spotify_id: string
   /** Assigned KMeans cluster ID. */
   cluster_id: number
+  /** Assigned language group. */
+  language_group?: string
   /** Raw and scaled audio features. */
   raw_features: TrackFeatures
 }
@@ -158,6 +184,8 @@ export interface RecommendedTrackResponse {
   cluster_id: number
   /** Cluster name of the recommendation. */
   cluster_name: string
+  /** Categorized language group. */
+  language_group?: string
   /** Normalized feature levels. */
   features: TrackFeatures
   /** Feature differences relative to seed track. */

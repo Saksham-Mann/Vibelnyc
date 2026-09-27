@@ -1,5 +1,18 @@
 import { FormEvent, useRef, useState, useEffect } from 'react'
-import { Mood, MoodOption, SearchResultItem } from '@/types/music'
+import {
+  LanguageGroup,
+  LanguageOption,
+  Mood,
+  MoodOption,
+  SearchResultItem,
+} from '@/types/music'
+
+const LANGUAGE_OPTIONS: LanguageOption[] = [
+  { id: 'all', label: 'ALL' },
+  { id: 'english', label: 'ENGLISH' },
+  { id: 'spanish_latin', label: 'SPANISH/LATIN' },
+  { id: 'east_asian', label: 'ASIAN POP' },
+]
 
 /**
  * Props for the Hero component.
@@ -21,13 +34,17 @@ interface HeroProps {
   onSelectMood: (mood: Mood) => void
   /** List of available mood options with display styles. */
   moods: MoodOption[]
+  /** Currently selected language filter. */
+  selectedLanguage: LanguageGroup
+  /** Callback fired when a language filter pill is selected. */
+  onSelectLanguage: (language: LanguageGroup) => void
 }
 
 /**
- * Hero section component providing search input, autocomplete combobox, and mood filter toggles.
+ * Hero section component providing search input, autocomplete combobox, mood filters, and language filters.
  *
  * @param props Component configuration options.
- * @returns JSX Element rendering the Hero search and mood navigation block.
+ * @returns JSX Element rendering the Hero search and navigation block.
  */
 export function Hero({
   query,
@@ -38,6 +55,8 @@ export function Hero({
   activeMood,
   onSelectMood,
   moods,
+  selectedLanguage,
+  onSelectLanguage,
 }: HeroProps) {
   const [showDropdown, setShowDropdown] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -169,6 +188,23 @@ export function Hero({
             onClick={() => onSelectMood(item.name)}
           >
             [ {item.name} ]
+          </button>
+        ))}
+      </div>
+
+      <div className="language-filters" aria-label="Language filter controls">
+        <span>LANG:</span>
+        {LANGUAGE_OPTIONS.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={`lang-pill ${
+              selectedLanguage === item.id ? 'lang-pill-active' : ''
+            }`}
+            onClick={() => onSelectLanguage(item.id)}
+            aria-pressed={selectedLanguage === item.id}
+          >
+            [ {item.label} ]
           </button>
         ))}
       </div>

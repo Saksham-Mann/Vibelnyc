@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, ArrowUpRight, Loader2, X } from 'lucide-react'
 import {
   ClusterInfo,
+  LanguageGroup,
   Mood,
   RecommendedTrackResponse,
   SearchResultItem,
@@ -52,6 +53,7 @@ function mapBackendRecToUiTrack(rec: RecommendedTrackResponse): Track {
     spotifyId: rec.spotify_id,
     clusterId: rec.cluster_id,
     clusterName: rec.cluster_name,
+    languageGroup: rec.language_group,
     deltas: rec.deltas,
   }
 }
@@ -82,6 +84,7 @@ function mapBackendSeedToUiTrack(seed: SeedTrackResponse): Track {
     match: 100,
     spotifyId: seed.spotify_id,
     clusterId: seed.cluster_id,
+    languageGroup: seed.language_group,
   }
 }
 
@@ -94,6 +97,11 @@ function mapBackendSeedToUiTrack(seed: SeedTrackResponse): Track {
  */
 export default function Page() {
   const [mood, setMood] = useState<Mood>('MELANCHOLY')
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageGroup>('all')
+  const [activeSearchQuery, setActiveSearchQuery] = useState<{
+    trackName: string
+    artistName?: string
+  } | null>(null)
   const [query, setQuery] = useState('')
   const [suggestions, setSuggestions] = useState<SearchResultItem[]>([])
   const [seedTrack, setSeedTrack] = useState<Track>(SEED_TRACK)
@@ -109,16 +117,16 @@ export default function Page() {
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   /**
-   * Loads recommendations based on a selected mood archetype.
+   * Loads recommendations based on a selected mood archetype and language filter.
    * Fetches from FastAPI and falls back to mock fixture on failure.
    */
   const loadMoodRecommendations = useCallback(
-    async (selectedMood: Mood) => {
+    async (selectedMood: Mood, lang: LanguageGroup = 'all') => {
       setIsLoading(true)
       setErrorMessage(null)
 
       try {
-        const response = await recommendByMood(selectedMood, 3)
+        const response = await recommendByMood(selectedMood, 3, lang)
         const uiTracks = response.recommendations.map(mapBackendRecToUiTrack)
         const uiSeed = mapBackendSeedToUiTrack(response.seed_track)
 
@@ -126,7 +134,7 @@ export default function Page() {
         setSeedTrack(uiSeed)
         setClusterInfo(response.cluster_info)
         setIsBackendConnected(true)
-      } catch (err) {
+      } catch {
         setIsBackendConnected(false)
         setVisibleTracks(MOCK_TRACKS[selectedMood] || MOCK_TRACKS.MELANCHOLY)
         setClusterInfo(null)
@@ -143,7 +151,7 @@ export default function Page() {
       const healthy = await checkBackendHealth()
       setIsBackendConnected(healthy)
       if (healthy) {
-        await loadMoodRecommendations('MELANCHOLY')
+        await loadMoodRecommendations('MELANCHOLY', 'all')
       }
     }
     init()
@@ -177,17 +185,19 @@ export default function Page() {
   }, [query])
 
   /**
-   * Handles user submission of a search query for a specific seed track.
+   * Handles user submission of a search query for a specific seed track with language filtering.
    */
   const handleSearchSubmit = async (
     trackName: string,
-    artistName?: string
+    artistName?: string,
+    lang: LanguageGroup = selectedLanguage
   ) => {
     setIsSearching(true)
     setErrorMessage(null)
+    setActiveSearchQuery({ trackName, artistName })
 
     try {
-      const response = await recommendByTrack(trackName, artistName, 3)
+      const response = await recommendByTrack(trackName, artistName, 3, lang)
       const uiTracks = response.recommendations.map(mapBackendRecToUiTrack)
       const uiSeed = mapBackendSeedToUiTrack(response.seed_track)
 
@@ -214,12 +224,40 @@ export default function Page() {
   }
 
   /**
-   * Handles mood filter clicks.
+   * Handles mood filter clicks and resets active search query.
    */
   const handleMoodSelect = (selectedMood: Mood) => {
     setMood(selectedMood)
-    loadMoodRecommendations(selectedMood)
+    setActiveSearchQuery(null)
+    loadMoodRecommendations(selectedMood, selectedLanguage)
   }
+
+  /**
+   * Handles language filter selection and triggers refresh based on current context.
+   */
+  const handleLanguageSelect = (newLanguage: LanguageGroup) => {
+    setSelectedLanguage(newLanguage)
+    if (activeSearchQuery) {
+      handleSearchSubmit(
+        activeSearchQuery.trackName,
+        activeSearchQuery.artistName,
+        newLanguage
+      )
+    } else {
+      loadMoodRecommendations(mood, newLanguage)
+    }
+  }
+
+  const isSeedTrackPlayable =
+    seedTrack.spotifyId &&
+    seedTrack.spotifyId.trim().length > 0 &&
+    !seedTrack.spotifyId.startsWith('mood-')
+
+  const seedSpotifyUrl = isSeedTrackPlayable
+    ? `https://open.spotify.com/track/${seedTrack.spotifyId}`
+    : `https://open.spotify.com/search/${encodeURIComponent(
+        `${seedTrack.title} ${seedTrack.artist}`
+      )}`
 
   return (
     <main className="app-shell">
@@ -228,12 +266,14 @@ export default function Page() {
       <Hero
         query={query}
         onQueryChange={setQuery}
-        onSearchSubmit={handleSearchSubmit}
+        onSearchSubmit={(t, a) => handleSearchSubmit(t, a, selectedLanguage)}
         suggestions={suggestions}
         isSearching={isSearching}
         activeMood={mood}
         onSelectMood={handleMoodSelect}
         moods={MOODS}
+        selectedLanguage={selectedLanguage}
+        onSelectLanguage={handleLanguageSelect}
       />
 
       {errorMessage && (
@@ -293,7 +333,40 @@ export default function Page() {
             </small>
           )}
         </div>
-        <Waveform />
+
+        {isSeedTrackPlayable ? (
+          <div className="seed-player">
+            <iframe
+              src={`https://open.spotify.com/embed/track/${seedTrack.spotifyId}?utm_source=generator&theme=0`}
+              width="100%"
+              height="80"
+              frameBorder="0"
+              allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+              loading="lazy"
+              style={{
+                display: 'block',
+                border: '2px solid var(--ink)',
+                borderRadius: '4px',
+              }}
+              title={`Spotify preview for seed track ${seedTrack.title} by ${seedTrack.artist}`}
+            />
+          </div>
+        ) : (
+          <Waveform />
+        )}
+
+        {isSeedTrackPlayable && (
+          <a
+            href={seedSpotifyUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="add-track-link"
+            style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
+            aria-label={`Play ${seedTrack.title} by ${seedTrack.artist} on Spotify`}
+          >
+            PLAY [ SPOTIFY ]
+          </a>
+        )}
       </section>
 
       <div className="content-grid">

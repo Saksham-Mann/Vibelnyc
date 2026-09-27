@@ -221,6 +221,11 @@ class RecommendRequest(BaseModel):
         max_length=128,
     )
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
+    language: Optional[str] = Field(
+        "all",
+        description="Language group filter identifier or 'all'",
+        max_length=32,
+    )
 
 
 class MoodRecommendRequest(BaseModel):
@@ -231,6 +236,11 @@ class MoodRecommendRequest(BaseModel):
         max_length=32,
     )
     n_results: int = Field(3, description="Number of recommendations to return", ge=1, le=20)
+    language: Optional[str] = Field(
+        "all",
+        description="Language group filter identifier or 'all'",
+        max_length=32,
+    )
 
 
 # --- API Routes ---
@@ -309,7 +319,7 @@ async def recommend_tracks(payload: RecommendRequest) -> Dict[str, Any]:
     Computes exact cosine similarity and feature deltas for energy, valence, and danceability.
 
     Args:
-        payload (RecommendRequest): Request body containing track_name, artist_name, and n_results.
+        payload (RecommendRequest): Request body containing track_name, artist_name, n_results, and language.
 
     Returns:
         Dict[str, Any]: Complete recommendation envelope with seed track, cluster info, and candidate list.
@@ -328,6 +338,7 @@ async def recommend_tracks(payload: RecommendRequest) -> Dict[str, Any]:
             track_name=payload.track_name,
             artist_name=payload.artist_name,
             n_results=payload.n_results,
+            language=payload.language,
         )
         return results
     except ValueError as e:
@@ -351,7 +362,7 @@ async def recommend_mood(payload: MoodRecommendRequest) -> Dict[str, Any]:
     'melancholy', 'high-energy', 'chill', or 'pop'.
 
     Args:
-        payload (MoodRecommendRequest): Request body containing mood string and n_results.
+        payload (MoodRecommendRequest): Request body containing mood string, n_results, and language.
 
     Returns:
         Dict[str, Any]: Complete recommendation envelope formatted identically to track recommendations.
@@ -369,6 +380,7 @@ async def recommend_mood(payload: MoodRecommendRequest) -> Dict[str, Any]:
         results = recommender.recommend_by_mood(
             mood=payload.mood,
             n_results=payload.n_results,
+            language=payload.language,
         )
         return results
     except ValueError as e:

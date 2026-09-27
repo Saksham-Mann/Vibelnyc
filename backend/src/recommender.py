@@ -3,8 +3,10 @@ Inference engine for Vibelnyc recommendations.
 Provides track-to-track similarity search, mood preset matching, and autocomplete.
 """
 
+import difflib
 import json
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 import joblib
 import numpy as np
@@ -18,6 +20,21 @@ from preprocess import (
     SCALED_FEATURE_COLS,
     get_default_paths,
 )
+
+def normalize_search_text(text: str) -> str:
+    """
+    Strips non-alphanumeric punctuation and collapses whitespace for robust query matching.
+
+    Args:
+        text (str): Raw input text string.
+
+    Returns:
+        str: Cleaned, lowercased alphanumeric string.
+    """
+    if not text:
+        return ""
+    return re.sub(r'[^a-z0-9\s]', '', text.lower()).strip()
+
 
 class SecurityError(RuntimeError):
     """Raised when cryptographic checksum or integrity validation fails."""
@@ -162,10 +179,13 @@ class VibeRecommender:
         self.df = pd.read_parquet(parquet_path)
         self.feature_matrix = self.df[SCALED_FEATURE_COLS].values.astype(np.float64)
 
-        # Precompute combined lowercased search index column to avoid dynamic allocation DoS
+        # Precompute search indices for fast autocomplete and typo-tolerant matching
         self.df['search_index'] = (
-            self.df['track_name'].str.lower() + " " + self.df['artists'].str.lower()
+            self.df['track_name'].astype(str).str.lower() + " " + self.df['artists'].astype(str).str.lower()
         ).fillna('')
+        self.df['search_norm'] = self.df['search_index'].apply(normalize_search_text)
+        self.df['track_norm'] = self.df['track_name'].astype(str).apply(normalize_search_text)
+        self.df['artists_norm'] = self.df['artists'].astype(str).apply(normalize_search_text)
 
         print("[Recommender] Loading models (scaler, nearest_neighbors, kmeans)...")
         self.scaler = joblib.load(scaler_path)
@@ -182,10 +202,10 @@ class VibeRecommender:
     def search_tracks(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Performs fast autocomplete search for track titles and artists,
-        using precomputed search index and LRU query caching to mitigate DoS.
+        using normalized search indices, token overlap, and fuzzy fallback.
 
         Args:
-            query (str): Substring search text entered by the user.
+            query (str): Substring or keyword search text entered by the user.
             limit (int): Maximum number of search candidates to return.
 
         Returns:
@@ -194,14 +214,35 @@ class VibeRecommender:
         if not query or not query.strip():
             return []
 
-        q = query.strip().lower()[:64]
-        cache_key = f"{q}_{limit}"
+        q_raw = query.strip().lower()[:64]
+        q_norm = normalize_search_text(q_raw)
+        cache_key = f"{q_norm}_{limit}"
         if cache_key in self._search_cache:
             return self._search_cache[cache_key]
 
-        # Use precomputed search_index for single pass search
-        mask = self.df['search_index'].str.contains(q, na=False, regex=False)
-        matches = self.df[mask]
+        # 1. Direct normalized search on combined track + artist index
+        matches = self.df[self.df['search_norm'].str.contains(q_norm, na=False, regex=False)]
+
+        # 2. Token overlap search if direct normalized substring yields no matches
+        if matches.empty and len(q_norm.split()) > 1:
+            tokens = [t for t in q_norm.split() if len(t) > 1]
+            if tokens:
+                token_mask = self.df['search_norm'].str.contains(tokens[0], na=False, regex=False)
+                for tok in tokens[1:]:
+                    token_mask = token_mask & self.df['search_norm'].str.contains(tok, na=False, regex=False)
+                matches = self.df[token_mask]
+
+        # 3. Fuzzy matching fallback for typos if still empty
+        if matches.empty and len(q_norm) >= 4:
+            candidate_pool = self.df.sort_values(by='popularity', ascending=False).head(2000)
+            close_titles = difflib.get_close_matches(
+                q_norm,
+                candidate_pool['track_norm'].tolist(),
+                n=limit,
+                cutoff=0.6,
+            )
+            if close_titles:
+                matches = candidate_pool[candidate_pool['track_norm'].isin(close_titles)]
 
         if matches.empty:
             return []
@@ -216,6 +257,7 @@ class VibeRecommender:
                 'artists': str(row['artists']),
                 'album_name': str(row.get('album_name', '')),
                 'popularity': int(row.get('popularity', 0)),
+                'language_group': str(row.get('language_group', 'english')),
             })
 
         if len(self._search_cache) > 500:
@@ -229,7 +271,8 @@ class VibeRecommender:
         artist_name: Optional[str] = None,
     ) -> Optional[pd.Series]:
         """
-        Locates the best candidate seed track record in the dataset using exact or fuzzy title matching.
+        Locates the best candidate seed track record in the dataset using exact, normalized,
+        token overlap, and fuzzy title matching.
 
         Args:
             track_name (str): Title of the song to search for.
@@ -239,25 +282,51 @@ class VibeRecommender:
             Optional[pd.Series]: Matched track row from the DataFrame or None if not found.
         """
         t_clean = track_name.strip().lower()
+        t_norm = normalize_search_text(track_name)
 
         if artist_name and artist_name.strip():
             a_clean = artist_name.strip().lower()
+            a_norm = normalize_search_text(artist_name)
             match = self.df[
-                (self.df['track_name'].str.lower() == t_clean)
-                & (self.df['artists'].str.lower().str.contains(a_clean, na=False, regex=False))
+                (self.df['track_norm'] == t_norm)
+                & (self.df['artists_norm'].str.contains(a_norm, na=False, regex=False))
             ]
             if not match.empty:
                 return match.sort_values(by='popularity', ascending=False).iloc[0]
 
-        # Exact title match
-        match = self.df[self.df['track_name'].str.lower() == t_clean]
+        # 1. Exact normalized title match
+        match = self.df[self.df['track_norm'] == t_norm]
         if not match.empty:
             return match.sort_values(by='popularity', ascending=False).iloc[0]
 
-        # Fallback to substring title match
-        match = self.df[self.df['track_name'].str.lower().str.contains(t_clean, na=False, regex=False)]
+        # 2. Substring normalized title match
+        match = self.df[self.df['track_norm'].str.contains(t_norm, na=False, regex=False)]
         if not match.empty:
             return match.sort_values(by='popularity', ascending=False).iloc[0]
+
+        # 3. Token overlap match on title
+        tokens = [t for t in t_norm.split() if len(t) > 1]
+        if len(tokens) > 1:
+            token_mask = self.df['track_norm'].str.contains(tokens[0], na=False, regex=False)
+            for tok in tokens[1:]:
+                token_mask = token_mask & self.df['track_norm'].str.contains(tok, na=False, regex=False)
+            match = self.df[token_mask]
+            if not match.empty:
+                return match.sort_values(by='popularity', ascending=False).iloc[0]
+
+        # 4. Fuzzy title match fallback
+        if len(t_norm) >= 4:
+            top_pool = self.df.sort_values(by='popularity', ascending=False).head(3000)
+            close_titles = difflib.get_close_matches(
+                t_norm,
+                top_pool['track_norm'].tolist(),
+                n=1,
+                cutoff=0.65,
+            )
+            if close_titles:
+                match = top_pool[top_pool['track_norm'] == close_titles[0]]
+                if not match.empty:
+                    return match.iloc[0]
 
         return None
 
@@ -285,15 +354,17 @@ class VibeRecommender:
         track_name: str,
         artist_name: Optional[str] = None,
         n_results: int = 3,
+        language: Optional[str] = "all",
     ) -> Dict[str, Any]:
         """
         Recommends candidate tracks matching the 8D audio profile of a seed track.
-        Computes cosine similarity percentage and feature deltas.
+        Supports language-based filtering with graceful fallback to nearest global matches.
 
         Args:
             track_name (str): Title of the seed track.
             artist_name (Optional[str]): Optional artist name.
             n_results (int): Number of top recommendations to return.
+            language (Optional[str]): Language filter identifier or 'all'.
 
         Returns:
             Dict[str, Any]: Dictionary containing seed_track details, cluster_info, and recommendations list.
@@ -315,13 +386,21 @@ class VibeRecommender:
             'name', f"Cluster #{seed_cluster_id:02d}"
         )
 
-        k_lookup = min(n_results + 10, len(self.df))
+        filter_lang = (
+            language.strip().lower()
+            if language and language.strip().lower() != "all"
+            else None
+        )
+
+        k_lookup = min(max(n_results * 50, 200), len(self.df))
         distances, indices = self.nn_model.kneighbors(seed_vector, n_neighbors=k_lookup)
 
         seed_track_id = str(seed_row['track_id'])
         seed_features = self._format_track_features(seed_row)
 
-        recommendations: List[Dict[str, Any]] = []
+        primary_recommendations: List[Dict[str, Any]] = []
+        fallback_candidates: List[Dict[str, Any]] = []
+
         for dist, idx in zip(distances[0], indices[0]):
             cand_row = self.df.iloc[idx]
             cand_track_id = str(cand_row['track_id'])
@@ -338,19 +417,35 @@ class VibeRecommender:
                 'danceability': round(cand_features['danceability'] - seed_features['danceability'], 1),
             }
 
-            recommendations.append({
+            cand_dict = {
                 'track_name': str(cand_row['track_name']),
                 'artist': str(cand_row['artists']),
                 'spotify_id': cand_track_id,
                 'match_percentage': similarity_percentage,
                 'cluster_id': int(cand_row['cluster_id']),
                 'cluster_name': str(cand_row.get('cluster_name', '')),
+                'language_group': str(cand_row.get('language_group', 'english')),
                 'features': cand_features,
                 'deltas': deltas,
-            })
+            }
 
-            if len(recommendations) >= n_results:
+            cand_lang = str(cand_row.get('language_group', '')).lower()
+            if filter_lang and cand_lang == filter_lang:
+                primary_recommendations.append(cand_dict)
+            else:
+                fallback_candidates.append(cand_dict)
+
+            if len(primary_recommendations) >= n_results:
                 break
+
+        # Fallback gracefully to nearest global matches if fewer than n_results match filter
+        recommendations = list(primary_recommendations)
+        if len(recommendations) < n_results:
+            for fallback in fallback_candidates:
+                if fallback['spotify_id'] not in {r['spotify_id'] for r in recommendations}:
+                    recommendations.append(fallback)
+                if len(recommendations) >= n_results:
+                    break
 
         return {
             'seed_track': {
@@ -358,27 +453,30 @@ class VibeRecommender:
                 'artist': str(seed_row['artists']),
                 'spotify_id': seed_track_id,
                 'cluster_id': seed_cluster_id,
+                'language_group': str(seed_row.get('language_group', 'english')),
                 'raw_features': seed_features,
             },
             'cluster_info': {
                 'cluster_id': seed_cluster_id,
                 'cluster_name': cluster_name,
             },
-            'recommendations': recommendations,
+            'recommendations': recommendations[:n_results],
         }
 
     def recommend_by_mood(
         self,
         mood: str,
         n_results: int = 3,
+        language: Optional[str] = "all",
     ) -> Dict[str, Any]:
         """
         Recommends tracks matching a predefined mood archetype vector
-        ('melancholy', 'high-energy', 'chill', 'pop').
+        with optional language filtering and graceful global fallback.
 
         Args:
             mood (str): Mood preset key.
             n_results (int): Number of top candidate recommendations to return.
+            language (Optional[str]): Language filter identifier or 'all'.
 
         Returns:
             Dict[str, Any]: Dictionary containing archetype seed_track, cluster_info, and recommendations.
@@ -400,6 +498,12 @@ class VibeRecommender:
             'name', f"Cluster #{cluster_id:02d}"
         )
 
+        filter_lang = (
+            language.strip().lower()
+            if language and language.strip().lower() != "all"
+            else None
+        )
+
         archetype_features = {
             'energy': round(preset_dict['energy'] * 100, 1),
             'valence': round(preset_dict['valence'] * 100, 1),
@@ -409,9 +513,12 @@ class VibeRecommender:
             'loudness': -8.0,
         }
 
-        distances, indices = self.nn_model.kneighbors(vector, n_neighbors=n_results)
+        k_lookup = min(max(n_results * 50, 200), len(self.df))
+        distances, indices = self.nn_model.kneighbors(vector, n_neighbors=k_lookup)
 
-        recommendations: List[Dict[str, Any]] = []
+        primary_recommendations: List[Dict[str, Any]] = []
+        fallback_candidates: List[Dict[str, Any]] = []
+
         for dist, idx in zip(distances[0], indices[0]):
             cand_row = self.df.iloc[idx]
             similarity_percentage = round((1.0 - float(dist)) * 100, 1)
@@ -423,16 +530,35 @@ class VibeRecommender:
                 'danceability': round(cand_features['danceability'] - archetype_features['danceability'], 1),
             }
 
-            recommendations.append({
+            cand_dict = {
                 'track_name': str(cand_row['track_name']),
                 'artist': str(cand_row['artists']),
                 'spotify_id': str(cand_row['track_id']),
                 'match_percentage': similarity_percentage,
                 'cluster_id': int(cand_row['cluster_id']),
                 'cluster_name': str(cand_row.get('cluster_name', '')),
+                'language_group': str(cand_row.get('language_group', 'english')),
                 'features': cand_features,
                 'deltas': deltas,
-            })
+            }
+
+            cand_lang = str(cand_row.get('language_group', '')).lower()
+            if filter_lang and cand_lang == filter_lang:
+                primary_recommendations.append(cand_dict)
+            else:
+                fallback_candidates.append(cand_dict)
+
+            if len(primary_recommendations) >= n_results:
+                break
+
+        # Fallback gracefully to nearest global matches if fewer than n_results match filter
+        recommendations = list(primary_recommendations)
+        if len(recommendations) < n_results:
+            for fallback in fallback_candidates:
+                if fallback['spotify_id'] not in {r['spotify_id'] for r in recommendations}:
+                    recommendations.append(fallback)
+                if len(recommendations) >= n_results:
+                    break
 
         return {
             'seed_track': {
@@ -440,11 +566,12 @@ class VibeRecommender:
                 'artist': "Vibelnyc Sonic Archetype",
                 'spotify_id': f"mood-{m_key}",
                 'cluster_id': cluster_id,
+                'language_group': filter_lang or 'all',
                 'raw_features': archetype_features,
             },
             'cluster_info': {
                 'cluster_id': cluster_id,
                 'cluster_name': cluster_name,
             },
-            'recommendations': recommendations,
+            'recommendations': recommendations[:n_results],
         }
